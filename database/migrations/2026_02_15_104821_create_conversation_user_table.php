@@ -13,10 +13,16 @@ return new class extends Migration
     {
         Schema::create('conversation_user', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('conversation_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->unique(['conversation_id', 'user_id']);
+            $table->foreignId('conversation_id')->constrained()->onDelete('cascade');
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->timestamps();
+            
+            // Prevent duplicate entries (user can't join same conversation twice)
+            $table->unique(['conversation_id', 'user_id']);
+            
+            // Indexes for faster queries
+            $table->index('conversation_id');
+            $table->index('user_id');
         });
     }
 

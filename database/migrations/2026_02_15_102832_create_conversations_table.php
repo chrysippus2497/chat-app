@@ -13,8 +13,13 @@ return new class extends Migration
     {
         Schema::create('conversations', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->nullable(); // null for 1-on-1
+            $table->string('name')->nullable();
+            $table->boolean('is_group')->default(false);
             $table->timestamps();
+            
+            // Optional indexes for performance
+            $table->index('is_group');
+            $table->index('created_at');
         });
     }
 
