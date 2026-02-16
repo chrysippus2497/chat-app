@@ -3,8 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\ConversationCollection;
+use App\Http\Resources\ConversationResource;
 use App\Models\Conversation;
-use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -17,57 +18,60 @@ class ConversationController extends Controller
     public function index()
     {
         $conversations = Auth::user()->conversations()
-            ->with(['users:id,name', 'messages' => function($query) {
-                $query->latest()->limit(1);
-            }])
+            ->with([
+                'users:id,name,email,created_at',
+                'lastMessage.sender:id,name,email,created_at'
+            ])
             ->withCount('messages')
-            ->orderBy('updated_at', 'desc')
+            ->latest('updated_at')
             ->get();
 
-        return response()->json($conversations);
+        return new ConversationCollection($conversations);
     }
 
     /**
-     * Create new conversation (1-on-1 or group)
+     * Create new conversation with duplicate prevention
      */
     public function store(Request $request)
     {
         $validated = $request->validate([
             'user_ids' => 'required|array|min:1',
-            'user_ids.*' => 'exists:users,id',
+            'user_ids.*' => 'required|exists:users,id|distinct',
             'name' => 'nullable|string|max:255',
             'is_group' => 'boolean'
         ]);
 
-        $userIds = $validated['user_ids'];
-        $userIds[] = Auth::id(); // Add current user
-        $userIds = array_unique($userIds);
+        // Prepare user IDs
+        $userIds = array_unique([...$validated['user_ids'], Auth::id()]);
+        $isGroup = $validated['is_group'] ?? (count($userIds) > 2);
 
-        // Check if 1-on-1 conversation already exists
-        if (count($userIds) === 2 && !($validated['is_group'] ?? false)) {
+        // Check for existing 1-on-1 conversation
+        if (!$isGroup && count($userIds) === 2) {
             $existing = Conversation::where('is_group', false)
                 ->whereHas('users', function($query) use ($userIds) {
                     $query->whereIn('user_id', $userIds);
                 }, '=', 2)
+                ->with(['users:id,name,email,created_at'])
                 ->first();
 
             if ($existing) {
-                return response()->json($existing->load('users:id,name'), 200);
+                return new ConversationResource($existing);
             }
         }
 
-        $conversation = DB::transaction(function() use ($validated, $userIds) {
+        // Create new conversation in transaction
+        $conversation = DB::transaction(function() use ($validated, $userIds, $isGroup) {
             $conversation = Conversation::create([
                 'name' => $validated['name'] ?? null,
-                'is_group' => $validated['is_group'] ?? (count($userIds) > 2)
+                'is_group' => $isGroup
             ]);
 
             $conversation->users()->attach($userIds);
 
-            return $conversation;
+            return $conversation->load('users:id,name,email,created_at');
         });
 
-        return response()->json($conversation->load('users:id,name'), 201);
+        return new ConversationResource($conversation);
     }
 
     /**
@@ -75,13 +79,14 @@ class ConversationController extends Controller
      */
     public function show(string $id)
     {
-        $conversation = Conversation::whereHas('users', function($query) {
-                $query->where('user_id', Auth::id());
-            })
-            ->with('users:id,name')
+        $conversation = Auth::user()->conversations()
+            ->with([
+                'users:id,name,email,created_at',
+                'lastMessage.sender:id,name,email,created_at'
+            ])
             ->findOrFail($id);
 
-        return response()->json($conversation);
+        return new ConversationResource($conversation);
     }
 
     /**
@@ -89,18 +94,16 @@ class ConversationController extends Controller
      */
     public function update(Request $request, string $id)
     {
+        $conversation = Auth::user()->conversations()->findOrFail($id);
+
         $validated = $request->validate([
             'name' => 'nullable|string|max:255'
         ]);
 
-        $conversation = Conversation::whereHas('users', function($query) {
-                $query->where('user_id', Auth::id());
-            })
-            ->findOrFail($id);
-
         $conversation->update($validated);
+        $conversation->load('users:id,name,email,created_at');
 
-        return response()->json($conversation);
+        return new ConversationResource($conversation);
     }
 
     /**
@@ -108,19 +111,20 @@ class ConversationController extends Controller
      */
     public function destroy(string $id)
     {
-        $conversation = Conversation::whereHas('users', function($query) {
-                $query->where('user_id', Auth::id());
-            })
-            ->findOrFail($id);
+        $conversation = Auth::user()->conversations()->findOrFail($id);
 
-        // Remove user from conversation
-        $conversation->users()->detach(Auth::id());
+        DB::transaction(function() use ($conversation) {
+            // Remove current user
+            $conversation->users()->detach(Auth::id());
 
-        // Delete conversation if no users left
-        if ($conversation->users()->count() === 0) {
-            $conversation->delete();
-        }
+            // Delete conversation if empty
+            if ($conversation->users()->count() === 0) {
+                $conversation->delete();
+            }
+        });
 
-        return response()->noContent();
+        return response()->json([
+            'message' => 'Successfully left conversation'
+        ], 200);
     }
 }

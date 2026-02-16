@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\MessageCollection;
+use App\Http\Resources\MessageResource;
 use App\Models\Message;
 use App\Models\Conversation;
 use Illuminate\Http\Request;
@@ -15,17 +17,19 @@ class MessageController extends Controller
      */
     public function index(Conversation $conversation)
     {
-        // Check if user is part of the conversation
-        if (!$conversation->users->contains(auth()->id())) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        // Authorization
+        abort_unless(
+            $conversation->users->contains(Auth::id()),
+            403,
+            'Unauthorized access to conversation'
+        );
 
         $messages = $conversation->messages()
-            ->with('sender:id,name')
-            ->orderBy('created_at', 'asc')
+            ->with('sender:id,name,email,created_at')
+            ->oldest('created_at')
             ->get();
 
-        return response()->json($messages);
+        return new MessageCollection($messages);
     }
 
     /**
@@ -33,66 +37,86 @@ class MessageController extends Controller
      */
     public function store(Request $request, Conversation $conversation)
     {
-        // Check if user is part of the conversation
-        if (!$conversation->users->contains(auth()->id())) {
-            return response()->json(['message' => 'Unauthorized'], 403);
-        }
+        // Authorization
+        abort_unless(
+            $conversation->users->contains(Auth::id()),
+            403,
+            'Unauthorized access to conversation'
+        );
 
         $validated = $request->validate([
-            'content' => 'required|string'
+            'content' => 'required|string|max:10000'
         ]);
 
         $message = $conversation->messages()->create([
-            'sender_id' => auth()->id(),  // Changed from user_id
+            'sender_id' => Auth::id(),
             'content' => $validated['content']
         ]);
 
-        $message->load('sender:id,name');  // Changed from user
+        // Update conversation timestamp
+        $conversation->touch();
 
-        return response()->json($message, 201);
+        $message->load('sender:id,name,email,created_at');
+
+        return new MessageResource($message);
     }
+
 
     /**
      * Get a single message
      */
-    public function show(string $id)
+    public function show(Message $message)
     {
-        $message = Message::with('sender:id,name')
-            ->whereHas('conversation.users', function($query) {
-                $query->where('user_id', Auth::id());
-            })
-            ->findOrFail($id);
+        // Authorization
+        abort_unless(
+            $message->conversation->users->contains(Auth::id()),
+            403,
+            'Unauthorized access to message'
+        );
 
-        return response()->json($message);
+        $message->load('sender:id,name,email,created_at');
+
+        return new MessageResource($message);
     }
 
     /**
      * Update a message (edit)
      */
-    public function update(Request $request, string $id)
+    public function update(Request $request, Message $message)
     {
+        // Only sender can edit
+        abort_unless(
+            $message->sender_id === Auth::id(),
+            403,
+            'You can only edit your own messages'
+        );
+
         $validated = $request->validate([
-            'content' => 'required|string|max:5000'
+            'content' => 'required|string|max:10000'
         ]);
 
-        $message = Message::where('sender_id', Auth::id())
-            ->findOrFail($id);
-
         $message->update($validated);
+        $message->load('sender:id,name,email,created_at');
 
-        return response()->json($message);
+        return new MessageResource($message);
     }
 
     /**
      * Delete a message
      */
-    public function destroy(string $id)
+    public function destroy(Message $message)
     {
-        $message = Message::where('sender_id', Auth::id())
-            ->findOrFail($id);
+        // Only sender can delete
+        abort_unless(
+            $message->sender_id === Auth::id(),
+            403,
+            'You can only delete your own messages'
+        );
 
         $message->delete();
 
-        return response()->noContent();
+        return response()->json([
+            'message' => 'Message deleted successfully'
+        ], 200);
     }
 }
