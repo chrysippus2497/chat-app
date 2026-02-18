@@ -24,7 +24,7 @@ class ConversationController extends Controller
             ])
             ->withCount('messages')
             ->latest('updated_at')
-            ->get();
+            ->paginate(20);
 
         return new ConversationCollection($conversations);
     }
@@ -125,6 +125,41 @@ class ConversationController extends Controller
 
         return response()->json([
             'message' => 'Successfully left conversation'
+        ], 200);
+    }
+
+     /**
+     * Mark conversation messages as read
+     */
+    public function markAsRead(string $id)
+    {
+        $conversation = Auth::user()->conversations()->findOrFail($id);
+
+        // If you have a read tracking system, implement it here
+        // For now, just return success
+        
+        return response()->json([
+            'message' => 'Marked as read'
+        ], 200);
+    }
+
+    /**
+     * Update typing status
+     */
+    public function typing(Request $request, string $id)
+    {
+        $conversation = Auth::user()->conversations()->findOrFail($id);
+
+        $request->validate([
+            'typing' => 'required|boolean'
+        ]);
+
+        // This would broadcast typing status in real-time
+        // For now, just return success
+        
+        return response()->json([
+            'message' => 'Typing status updated',
+            'typing' => $request->typing
         ], 200);
     }
 }

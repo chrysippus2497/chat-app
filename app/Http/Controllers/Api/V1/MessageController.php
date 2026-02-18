@@ -17,7 +17,6 @@ class MessageController extends Controller
      */
     public function index(Conversation $conversation)
     {
-        // Authorization
         abort_unless(
             $conversation->users->contains(Auth::id()),
             403,
@@ -27,7 +26,7 @@ class MessageController extends Controller
         $messages = $conversation->messages()
             ->with('sender:id,name,email,created_at')
             ->oldest('created_at')
-            ->get();
+            ->paginate(50);
 
         return new MessageCollection($messages);
     }

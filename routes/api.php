@@ -19,12 +19,12 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     // Conversations
     Route::apiResource('conversations', ConversationController::class);
     
-    // Messages (nested under conversations)
-    Route::apiResource('conversations.messages', MessageController::class)
-        ->shallow()
-        ->except(['index', 'store']);
+    // Additional conversation routes
+    Route::post('conversations/{conversation}/read', [ConversationController::class, 'markAsRead']);
+    Route::post('conversations/{conversation}/typing', [ConversationController::class, 'typing']);
     
-    // Message list and create (special handling)
+    // Messages (nested under conversations)
     Route::get('conversations/{conversation}/messages', [MessageController::class, 'index']);
     Route::post('conversations/{conversation}/messages', [MessageController::class, 'store']);
+    Route::delete('messages/{message}', [MessageController::class, 'destroy']);
 });
